@@ -1617,3 +1617,4 @@ Happy coding! 🚀
 *This guide was created as part of the STM32F446RE_Drivers project.*
 *Reference: RM0390 - STM32F446xx Reference Manual*
 
+

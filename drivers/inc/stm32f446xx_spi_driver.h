@@ -1,10 +1,11 @@
 /*
- * stm32f407xx_spi_driver.h
- *auther: Neeraj
+ * stm32f446xx_spi_driver.h
+ * Author: Neeraj
+ * SPI Driver for STM32F446xx MCU
  */
 
-#ifndef INC_STM32F407XX_SPI_DRIVER_H_
-#define INC_STM32F407XX_SPI_DRIVER_H_
+#ifndef INC_STM32F446XX_SPI_DRIVER_H_
+#define INC_STM32F446XX_SPI_DRIVER_H_
 
 #include "stm32f446xx.h"
 
@@ -156,13 +157,12 @@ void SPI_SSIConfig(SPI_RegDef_t *pSPIx, uint8_t EnOrDi);
 void SPI_SSOEConfig(SPI_RegDef_t *pSPIx, uint8_t EnOrDi);
 uint8_t SPI_GetFlagStatus(SPI_RegDef_t *pSPIx , uint32_t FlagName);
 void SPI_ClearOVRFlag(SPI_RegDef_t *pSPIx);
-void SPI_CloseTransmisson(SPI_Handle_t *pSPIHandle);
+void SPI_CloseTransmission(SPI_Handle_t *pSPIHandle);
 void SPI_CloseReception(SPI_Handle_t *pSPIHandle);
-uint8_t I2C_DeviceMode(I2C_RegDef_t *I2Cx);
 
 /*
  * Application callback
  */
-void SPI_ApplicationEventCallback(SPI_Handle_t *pSPIHandle,uint8_t AppEv);
+void SPI_ApplicationEventCallback(SPI_Handle_t *pSPIHandle, uint8_t AppEv);
 
-#endif /* INC_STM32F407XX_SPI_DRIVER_H_ */
+#endif /* INC_STM32F446XX_SPI_DRIVER_H_ */

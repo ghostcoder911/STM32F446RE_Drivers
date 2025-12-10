@@ -503,7 +503,7 @@ static void  spi_txe_interrupt_handle(SPI_Handle_t *pSPIHandle)
 		//TX is over.
 
 		//this prevents interrupts from setting up of TXE flag
-		SPI_CloseTransmisson(pSPIHandle);
+		SPI_CloseTransmission(pSPIHandle);
 		SPI_ApplicationEventCallback(pSPIHandle,SPI_EVENT_TX_CMPLT);
 	}
 
@@ -556,7 +556,7 @@ static void  spi_ovr_err_interrupt_handle(SPI_Handle_t *pSPIHandle)
 }
 
 
-void SPI_CloseTransmisson(SPI_Handle_t *pSPIHandle)
+void SPI_CloseTransmission(SPI_Handle_t *pSPIHandle)
 {
 	pSPIHandle->pSPIx->CR2 &= ~( 1 << SPI_CR2_TXEIE);
 	pSPIHandle->pTxBuffer = NULL;
