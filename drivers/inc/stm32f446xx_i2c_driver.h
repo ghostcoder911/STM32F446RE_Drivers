@@ -1,5 +1,10 @@
-#ifndef INC_STM32F407XX_I2C_DRIVER_H_
-#define INC_STM32F407XX_I2C_DRIVER_H_
+/*
+ * stm32f446xx_i2c_driver.h
+ * I2C Driver for STM32F446xx MCU
+ */
+
+#ifndef INC_STM32F446XX_I2C_DRIVER_H_
+#define INC_STM32F446XX_I2C_DRIVER_H_
 
 #include "stm32f446xx.h"
 
@@ -151,4 +156,4 @@ void I2C_SlaveEnableDisableCallbackEvents(I2C_RegDef_t *pI2Cx,uint8_t EnorDi);
  */
 void I2C_ApplicationEventCallback(I2C_Handle_t *pI2CHandle,uint8_t AppEv);
 
-#endif
+#endif /* INC_STM32F446XX_I2C_DRIVER_H_ */
