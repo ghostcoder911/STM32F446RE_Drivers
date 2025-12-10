@@ -679,6 +679,526 @@ typedef struct
 } SPI_Handle_t;
 ```
 
+### 7.3.1 Why Do We Need the Handle Structure?
+
+Think of the **Handle Structure** as a **"control panel"** for managing an SPI peripheral. Without it, you would need to pass many individual parameters to every function, which would be messy and error-prone.
+
+```
+WITHOUT HANDLE STRUCTURE (Bad Approach):
+════════════════════════════════════════
+
+void SPI_Init(SPI_RegDef_t *pSPIx, 
+              uint8_t deviceMode, 
+              uint8_t busConfig,
+              uint8_t speed,
+              uint8_t dff,
+              uint8_t cpol,
+              uint8_t cpha,
+              uint8_t ssm);
+
+void SPI_SendData(SPI_RegDef_t *pSPIx,
+                  uint8_t *buffer,
+                  uint32_t len,
+                  uint8_t *txBuffer,    // For interrupt mode
+                  uint32_t *txLen,      // For interrupt mode
+                  uint8_t *state);      // For interrupt mode
+
+// Too many parameters! Hard to manage!
+
+
+WITH HANDLE STRUCTURE (Good Approach):
+═══════════════════════════════════════
+
+void SPI_Init(SPI_Handle_t *pSPIHandle);
+void SPI_SendData(SPI_Handle_t *pSPIHandle, uint8_t *buffer, uint32_t len);
+
+// Clean and simple! All information packaged in one structure.
+```
+
+### 7.3.2 The Two Structures Relationship
+
+We have **TWO** structures that work together:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    STRUCTURE RELATIONSHIP                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│   ┌─────────────────────────────────────────────────────────┐  │
+│   │              SPI_Config_t (Configuration)                │  │
+│   │  ─────────────────────────────────────────────────────  │  │
+│   │  Contains: User settings (mode, speed, CPOL, etc.)      │  │
+│   │  Purpose:  WHAT the user wants to configure             │  │
+│   └─────────────────────────────────────────────────────────┘  │
+│                              │                                  │
+│                              │ (is part of)                     │
+│                              ▼                                  │
+│   ┌─────────────────────────────────────────────────────────┐  │
+│   │              SPI_Handle_t (Handle)                       │  │
+│   │  ─────────────────────────────────────────────────────  │  │
+│   │  Contains: Peripheral pointer + Config + Runtime state  │  │
+│   │  Purpose:  Complete control of an SPI instance          │  │
+│   └─────────────────────────────────────────────────────────┘  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 7.3.3 Configuration Structure Members Explained
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│                    SPI_DeviceMode                                         │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  QUESTION: Is this STM32 the MASTER or SLAVE?                            │
+│                                                                           │
+│  Values:                                                                  │
+│  • SPI_DEVICE_MODE_MASTER (1) - STM32 generates clock, controls transfer │
+│  • SPI_DEVICE_MODE_SLAVE  (0) - STM32 responds to external master        │
+│                                                                           │
+│  MASTER:                          SLAVE:                                  │
+│  ┌─────────┐    SCK    ┌───────┐  ┌─────────┐    SCK    ┌───────┐       │
+│  │  STM32  │──────────→│ Slave │  │ Master  │──────────→│ STM32 │       │
+│  │ (Master)│           │Device │  │ Device  │           │(Slave)│       │
+│  └─────────┘           └───────┘  └─────────┘           └───────┘       │
+│                                                                           │
+│  Register: CR1, Bit 2 (MSTR)                                             │
+│                                                                           │
+└───────────────────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│                    SPI_BusConfig                                          │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  QUESTION: How many data lines and in which direction?                   │
+│                                                                           │
+│  Values:                                                                  │
+│  • SPI_BUS_CONFIG_FD (1)           - Full Duplex (2 lines: MOSI + MISO) │
+│  • SPI_BUS_CONFIG_HD (2)           - Half Duplex (1 line: bidirectional)│
+│  • SPI_BUS_CONFIG_SIMPLEX_RXONLY (3) - Receive Only                      │
+│                                                                           │
+│  FULL DUPLEX (Most Common):                                              │
+│  ┌───────┐    MOSI    ┌───────┐                                          │
+│  │Master │───────────→│ Slave │   Both directions simultaneously         │
+│  │       │←───────────│       │                                          │
+│  └───────┘    MISO    └───────┘                                          │
+│                                                                           │
+│  HALF DUPLEX:                                                            │
+│  ┌───────┐   DATA     ┌───────┐                                          │
+│  │Master │←──────────→│ Slave │   One direction at a time                │
+│  └───────┘  (1 line)  └───────┘                                          │
+│                                                                           │
+│  Register: CR1, Bits 15 (BIDIMODE) and 10 (RXONLY)                       │
+│                                                                           │
+└───────────────────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│                    SPI_SclkSpeed                                          │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  QUESTION: How fast should the SPI clock be?                             │
+│                                                                           │
+│  The clock is derived from APB bus clock (PCLK) divided by a prescaler.  │
+│                                                                           │
+│  Values and resulting clock (assuming PCLK = 16MHz):                     │
+│  ┌────────────────────────┬──────────────┬───────────────┐               │
+│  │ Macro                  │ Divider      │ Clock Speed   │               │
+│  ├────────────────────────┼──────────────┼───────────────┤               │
+│  │ SPI_SCLK_SPEED_DIV2   │ PCLK / 2     │ 8 MHz         │               │
+│  │ SPI_SCLK_SPEED_DIV4   │ PCLK / 4     │ 4 MHz         │               │
+│  │ SPI_SCLK_SPEED_DIV8   │ PCLK / 8     │ 2 MHz         │               │
+│  │ SPI_SCLK_SPEED_DIV16  │ PCLK / 16    │ 1 MHz         │               │
+│  │ SPI_SCLK_SPEED_DIV32  │ PCLK / 32    │ 500 KHz       │               │
+│  │ SPI_SCLK_SPEED_DIV64  │ PCLK / 64    │ 250 KHz       │               │
+│  │ SPI_SCLK_SPEED_DIV128 │ PCLK / 128   │ 125 KHz       │               │
+│  │ SPI_SCLK_SPEED_DIV256 │ PCLK / 256   │ 62.5 KHz      │               │
+│  └────────────────────────┴──────────────┴───────────────┘               │
+│                                                                           │
+│  TIP: Start with slower speed (DIV256) for testing, increase later       │
+│                                                                           │
+│  Register: CR1, Bits 5:3 (BR[2:0])                                       │
+│                                                                           │
+└───────────────────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│                    SPI_DFF (Data Frame Format)                            │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  QUESTION: How many bits per data frame - 8 or 16?                       │
+│                                                                           │
+│  Values:                                                                  │
+│  • SPI_DFF_8BITS  (0) - Send/receive 1 byte at a time                   │
+│  • SPI_DFF_16BITS (1) - Send/receive 2 bytes at a time                  │
+│                                                                           │
+│  8-BIT MODE:                        16-BIT MODE:                         │
+│  ┌─┬─┬─┬─┬─┬─┬─┬─┐                 ┌─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┬─┐    │
+│  │7│6│5│4│3│2│1│0│                 │F│E│D│C│B│A│9│8│7│6│5│4│3│2│1│0│    │
+│  └─┴─┴─┴─┴─┴─┴─┴─┘                 └─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┘    │
+│      8 bits                              16 bits                         │
+│                                                                           │
+│  IMPORTANT: This affects how you write to/read from DR register!         │
+│                                                                           │
+│  Register: CR1, Bit 11 (DFF)                                             │
+│                                                                           │
+└───────────────────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│                    SPI_CPOL (Clock Polarity)                              │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  QUESTION: What is the clock level when SPI is idle (not transferring)?  │
+│                                                                           │
+│  Values:                                                                  │
+│  • SPI_CPOL_LOW  (0) - Clock is LOW when idle                           │
+│  • SPI_CPOL_HIGH (1) - Clock is HIGH when idle                          │
+│                                                                           │
+│  CPOL = 0 (Low idle):               CPOL = 1 (High idle):                │
+│       ┌─┐ ┌─┐ ┌─┐ ┌─┐                  ─┐ ┌─┐ ┌─┐ ┌─┐ ┌─                 │
+│  ─────┘ └─┘ └─┘ └─┘ └─────            └─┘ └─┘ └─┘ └─┘                    │
+│  idle ↑              ↑ idle      idle ↑              ↑ idle              │
+│       transfer                        transfer                           │
+│                                                                           │
+│  MUST MATCH YOUR SLAVE DEVICE'S SETTING!                                 │
+│                                                                           │
+│  Register: CR1, Bit 1 (CPOL)                                             │
+│                                                                           │
+└───────────────────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│                    SPI_CPHA (Clock Phase)                                 │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  QUESTION: On which clock edge should data be sampled (read)?            │
+│                                                                           │
+│  Values:                                                                  │
+│  • SPI_CPHA_LOW  (0) - Sample on FIRST edge (leading edge)              │
+│  • SPI_CPHA_HIGH (1) - Sample on SECOND edge (trailing edge)            │
+│                                                                           │
+│  CPHA = 0 (First edge):                                                  │
+│        ┌───┐   ┌───┐                                                     │
+│  CLK ──┘   └───┘   └──                                                   │
+│        ↑       ↑                                                         │
+│     SAMPLE  SAMPLE                                                       │
+│                                                                           │
+│  CPHA = 1 (Second edge):                                                 │
+│        ┌───┐   ┌───┐                                                     │
+│  CLK ──┘   └───┘   └──                                                   │
+│            ↑       ↑                                                     │
+│         SAMPLE  SAMPLE                                                   │
+│                                                                           │
+│  MUST MATCH YOUR SLAVE DEVICE'S SETTING!                                 │
+│                                                                           │
+│  Register: CR1, Bit 0 (CPHA)                                             │
+│                                                                           │
+└───────────────────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│                    SPI_SSM (Software Slave Management)                    │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  QUESTION: How is the NSS (slave select) pin controlled?                 │
+│                                                                           │
+│  Values:                                                                  │
+│  • SPI_SSM_DI (0) - Hardware management (NSS pin used)                  │
+│  • SPI_SSM_EN (1) - Software management (NSS pin not used, use GPIO)    │
+│                                                                           │
+│  HARDWARE MANAGEMENT (SSM=0):                                            │
+│  ┌───────────┐                                                           │
+│  │   STM32   │                                                           │
+│  │   ┌───┐   │    NSS                                                    │
+│  │   │SPI├───┼──────────→ Slave (controlled by SPI hardware)            │
+│  │   └───┘   │                                                           │
+│  └───────────┘                                                           │
+│                                                                           │
+│  SOFTWARE MANAGEMENT (SSM=1):                                            │
+│  ┌───────────┐                                                           │
+│  │   STM32   │                                                           │
+│  │   ┌───┐   │    (NSS pin not connected)                               │
+│  │   │SPI│   │                                                           │
+│  │   └───┘   │    GPIO                                                   │
+│  │   ┌───┐   │                                                           │
+│  │   │PA4├───┼──────────→ Slave (controlled by your code)               │
+│  │   └───┘   │                                                           │
+│  └───────────┘                                                           │
+│                                                                           │
+│  FOR BEGINNERS: Use SSM=1 (software) - more control and flexibility     │
+│                                                                           │
+│  Register: CR1, Bit 9 (SSM)                                              │
+│                                                                           │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+### 7.3.4 Handle Structure Members Explained
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│                    pSPIx (Peripheral Pointer)                             │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  PURPOSE: Points to the base address of the SPI peripheral               │
+│                                                                           │
+│  Type: SPI_RegDef_t* (pointer to SPI register structure)                 │
+│                                                                           │
+│  Values: SPI1, SPI2, SPI3, or SPI4                                       │
+│                                                                           │
+│  WHY NEEDED:                                                             │
+│  • STM32F446 has 4 SPI peripherals                                       │
+│  • This tells the driver WHICH SPI to use                                │
+│  • Driver uses this to access the correct registers                      │
+│                                                                           │
+│  EXAMPLE:                                                                 │
+│  SPI_Handle_t spiHandle;                                                 │
+│  spiHandle.pSPIx = SPI2;  // Use SPI2 peripheral                        │
+│                                                                           │
+│  MEMORY MAP:                                                             │
+│  SPI1 → 0x40013000 (APB2)                                                │
+│  SPI2 → 0x40003800 (APB1)  ← spiHandle.pSPIx points here                │
+│  SPI3 → 0x40003C00 (APB1)                                                │
+│  SPI4 → 0x40013400 (APB2)                                                │
+│                                                                           │
+│  This pointer allows:                                                    │
+│  spiHandle.pSPIx->CR1 = ...   // Access CR1 register                    │
+│  spiHandle.pSPIx->DR = ...    // Access DR register                     │
+│                                                                           │
+└───────────────────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│                    SPIConfig (Configuration Settings)                     │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  PURPOSE: Stores all user configuration for this SPI instance            │
+│                                                                           │
+│  Type: SPI_Config_t (nested structure - explained above)                 │
+│                                                                           │
+│  WHY NEEDED:                                                             │
+│  • Groups all configuration in one place                                 │
+│  • Used by SPI_Init() to configure the peripheral                        │
+│  • Can be referenced later if needed                                     │
+│                                                                           │
+│  EXAMPLE:                                                                 │
+│  SPI_Handle_t spiHandle;                                                 │
+│  spiHandle.SPIConfig.SPI_DeviceMode = SPI_DEVICE_MODE_MASTER;           │
+│  spiHandle.SPIConfig.SPI_BusConfig = SPI_BUS_CONFIG_FD;                  │
+│  spiHandle.SPIConfig.SPI_SclkSpeed = SPI_SCLK_SPEED_DIV8;               │
+│  spiHandle.SPIConfig.SPI_DFF = SPI_DFF_8BITS;                           │
+│  spiHandle.SPIConfig.SPI_CPOL = SPI_CPOL_LOW;                           │
+│  spiHandle.SPIConfig.SPI_CPHA = SPI_CPHA_LOW;                           │
+│  spiHandle.SPIConfig.SPI_SSM = SPI_SSM_EN;                              │
+│                                                                           │
+└───────────────────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│              pTxBuffer & pRxBuffer (Buffer Pointers)                      │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  PURPOSE: Store pointers to user's data buffers (for INTERRUPT mode)     │
+│                                                                           │
+│  Type: uint8_t* (pointer to byte array)                                  │
+│                                                                           │
+│  WHY NEEDED (ONLY for interrupt-based communication):                    │
+│                                                                           │
+│  In BLOCKING mode:                                                       │
+│  ─────────────────                                                       │
+│  • User passes buffer directly to function                               │
+│  • Function waits until all data is sent/received                        │
+│  • Buffer pointers in handle NOT used                                    │
+│                                                                           │
+│  In INTERRUPT mode:                                                      │
+│  ──────────────────                                                      │
+│  • User calls function, which returns IMMEDIATELY                        │
+│  • Data transfer happens in background via interrupts                    │
+│  • ISR needs to know WHERE the data is → saved in handle                │
+│                                                                           │
+│  FLOW:                                                                   │
+│  1. User calls SPI_SendDataIT(&handle, myData, 10)                      │
+│  2. Function saves: handle.pTxBuffer = myData                           │
+│  3. Function enables TXE interrupt and returns                          │
+│  4. When TXE interrupt fires:                                            │
+│     - ISR reads next byte from handle.pTxBuffer                         │
+│     - ISR increments handle.pTxBuffer                                   │
+│     - ISR decrements handle.TxLen                                       │
+│  5. Repeat until TxLen = 0                                              │
+│                                                                           │
+│  VISUAL:                                                                 │
+│  User's buffer:     [A][B][C][D][E][F][G][H][I][J]                       │
+│                      ↑                                                   │
+│                      pTxBuffer (points here initially)                   │
+│                                                                           │
+│  After 3 bytes:     [A][B][C][D][E][F][G][H][I][J]                       │
+│                               ↑                                          │
+│                               pTxBuffer (moved forward)                  │
+│                                                                           │
+└───────────────────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│                    TxLen & RxLen (Length Counters)                        │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  PURPOSE: Track how many bytes are left to send/receive                  │
+│                                                                           │
+│  Type: uint32_t (unsigned 32-bit integer)                                │
+│                                                                           │
+│  WHY NEEDED (for interrupt mode):                                        │
+│  • ISR needs to know when transfer is complete                           │
+│  • Decremented after each byte sent/received                             │
+│  • When reaches 0, transfer is done                                      │
+│                                                                           │
+│  EXAMPLE FLOW (Sending 5 bytes):                                         │
+│                                                                           │
+│  Initial:     TxLen = 5                                                  │
+│  After ISR 1: TxLen = 4   (1 byte sent)                                 │
+│  After ISR 2: TxLen = 3   (2 bytes sent)                                │
+│  After ISR 3: TxLen = 2   (3 bytes sent)                                │
+│  After ISR 4: TxLen = 1   (4 bytes sent)                                │
+│  After ISR 5: TxLen = 0   (5 bytes sent) → DONE! Disable interrupt      │
+│                                                                           │
+│  CODE IN ISR:                                                            │
+│  if (handle->TxLen > 0)                                                  │
+│  {                                                                       │
+│      pSPIx->DR = *(handle->pTxBuffer);  // Send byte                    │
+│      handle->pTxBuffer++;                // Move to next byte           │
+│      handle->TxLen--;                    // Decrement counter           │
+│  }                                                                       │
+│  if (handle->TxLen == 0)                                                 │
+│  {                                                                       │
+│      // Transfer complete! Disable interrupt                            │
+│  }                                                                       │
+│                                                                           │
+└───────────────────────────────────────────────────────────────────────────┘
+
+┌───────────────────────────────────────────────────────────────────────────┐
+│                    TxState & RxState (State Variables)                    │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  PURPOSE: Track the current state of TX and RX operations                │
+│                                                                           │
+│  Type: uint8_t                                                           │
+│                                                                           │
+│  Possible Values:                                                        │
+│  • SPI_READY (0)       - SPI is idle, ready for new operation           │
+│  • SPI_BUSY_IN_TX (2)  - SPI is currently transmitting                  │
+│  • SPI_BUSY_IN_RX (1)  - SPI is currently receiving                     │
+│                                                                           │
+│  WHY NEEDED:                                                             │
+│  1. PREVENT CONFLICTS: Don't start new transfer while one is ongoing    │
+│  2. APPLICATION AWARENESS: Know when transfer is complete               │
+│  3. DEBUGGING: Know what SPI is doing                                   │
+│                                                                           │
+│  STATE MACHINE:                                                          │
+│                                                                           │
+│      ┌─────────────┐                                                     │
+│      │  SPI_READY  │◄────────────────────────────────┐                  │
+│      └──────┬──────┘                                 │                  │
+│             │                                        │                  │
+│    User calls              Transfer                  │                  │
+│    SendDataIT()            complete                  │                  │
+│             │                                        │                  │
+│             ▼                                        │                  │
+│      ┌─────────────────┐                            │                  │
+│      │ SPI_BUSY_IN_TX  │────────────────────────────┘                  │
+│      └─────────────────┘                                                │
+│                                                                           │
+│  CODE EXAMPLE:                                                           │
+│                                                                           │
+│  uint8_t SPI_SendDataIT(SPI_Handle_t *handle, uint8_t *data, uint32_t len)│
+│  {                                                                       │
+│      if (handle->TxState != SPI_BUSY_IN_TX)  // Check if free           │
+│      {                                                                   │
+│          handle->TxState = SPI_BUSY_IN_TX;   // Mark as busy            │
+│          handle->pTxBuffer = data;                                      │
+│          handle->TxLen = len;                                           │
+│          // Enable interrupt...                                         │
+│      }                                                                   │
+│      return handle->TxState;                                            │
+│  }                                                                       │
+│                                                                           │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+### 7.3.5 Complete Handle Structure Usage Example
+
+Here's how all the pieces come together:
+
+```c
+#include "stm32f446xx_spi_driver.h"
+
+int main(void)
+{
+    /*
+     * STEP 1: Create and initialize the Handle Structure
+     */
+    SPI_Handle_t SPI2Handle;
+    
+    // Set which SPI peripheral to use
+    SPI2Handle.pSPIx = SPI2;
+    
+    // Fill in the configuration
+    SPI2Handle.SPIConfig.SPI_DeviceMode = SPI_DEVICE_MODE_MASTER;
+    SPI2Handle.SPIConfig.SPI_BusConfig = SPI_BUS_CONFIG_FD;
+    SPI2Handle.SPIConfig.SPI_SclkSpeed = SPI_SCLK_SPEED_DIV8;
+    SPI2Handle.SPIConfig.SPI_DFF = SPI_DFF_8BITS;
+    SPI2Handle.SPIConfig.SPI_CPOL = SPI_CPOL_LOW;
+    SPI2Handle.SPIConfig.SPI_CPHA = SPI_CPHA_LOW;
+    SPI2Handle.SPIConfig.SPI_SSM = SPI_SSM_EN;
+    
+    // Initialize state variables (for interrupt mode)
+    SPI2Handle.TxState = SPI_READY;
+    SPI2Handle.RxState = SPI_READY;
+    SPI2Handle.pTxBuffer = NULL;
+    SPI2Handle.pRxBuffer = NULL;
+    SPI2Handle.TxLen = 0;
+    SPI2Handle.RxLen = 0;
+    
+    /*
+     * STEP 2: Pass the handle to init function
+     * The function reads ALL configuration from the handle
+     */
+    SPI_Init(&SPI2Handle);
+    
+    /*
+     * STEP 3: Use the handle for operations
+     */
+    uint8_t data[] = "Hello";
+    
+    SPI_SSIConfig(SPI2Handle.pSPIx, ENABLE);
+    SPI_PeripheralControl(SPI2Handle.pSPIx, ENABLE);
+    
+    // For blocking mode - just pass peripheral pointer and data
+    SPI_SendData(SPI2Handle.pSPIx, data, 5);
+    
+    // For interrupt mode - pass the entire handle
+    // SPI_SendDataIT(&SPI2Handle, data, 5);
+    
+    while(1);
+}
+```
+
+### 7.3.6 Handle Structure Summary
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│                           SUMMARY                                         │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  The HANDLE STRUCTURE serves THREE main purposes:                        │
+│                                                                           │
+│  1. IDENTIFY THE PERIPHERAL                                              │
+│     └─→ pSPIx tells driver which SPI (SPI1, SPI2, etc.)                 │
+│                                                                           │
+│  2. STORE CONFIGURATION                                                  │
+│     └─→ SPIConfig holds all user settings in one place                  │
+│                                                                           │
+│  3. MANAGE RUNTIME STATE (for interrupt mode)                            │
+│     ├─→ pTxBuffer, pRxBuffer: Where is the data?                        │
+│     ├─→ TxLen, RxLen: How much data left?                               │
+│     └─→ TxState, RxState: What is SPI doing now?                        │
+│                                                                           │
+│  BLOCKING MODE: Uses pSPIx and SPIConfig only                           │
+│  INTERRUPT MODE: Uses ALL members                                        │
+│                                                                           │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
 ### 7.4 Configuration Macros
 
 ```c
