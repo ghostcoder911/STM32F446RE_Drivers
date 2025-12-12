@@ -1,0 +1,27 @@
+# Build outputs
+Debug/
+Release/
+
+# IDE settings (optional - can keep these)
+.settings/
+
+# Object files
+*.o
+*.d
+*.su
+*.cyclo
+
+# Executables
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+
+# Dependency files
+*.dep
+
+# Backup files
+*~
+*.bak
+
